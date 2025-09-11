@@ -1,3 +1,18 @@
+"""
+Pi0/Pi0.5模型实现文件
+
+这个文件包含了Pi0和Pi0.5模型的核心实现，包括：
+- 模型架构定义（PaliGemma + 动作专家网络）
+- 前缀和后缀嵌入方法
+- 损失计算和动作采样
+- Pi0.5特有的adaRMSNorm时间建模
+
+Pi0.5相比Pi0的主要改进：
+1. 使用离散状态输入而不是连续状态输入
+2. 动作专家网络使用adaRMSNorm来注入flow matching时间步
+3. 更长的token序列支持（200 vs 48）
+"""
+
 import logging
 
 import einops
@@ -17,25 +32,27 @@ logger = logging.getLogger("openpi")
 
 
 def make_attn_mask(input_mask, mask_ar):
-    """Adapted from big_vision.
-
-    Tokens can attend to valid inputs tokens which have a cumulative mask_ar
-    smaller or equal to theirs. This way `mask_ar` bool[?B, N] can be used to
-    setup several types of attention, for example:
-
-      [[1 1 1 1 1 1]]: pure causal attention.
-
-      [[0 0 0 1 1 1]]: prefix-lm attention. The first 3 tokens can attend between
-          themselves and the last 3 tokens have a causal attention. The first
-          entry could also be a 1 without changing behaviour.
-
-      [[1 0 1 0 1 0 0 1 0 0]]: causal attention between 4 blocks. Tokens of a
-          block can attend all previous blocks and all tokens on the same block.
-
+    """
+    创建注意力掩码
+    
+    这个函数从big_vision项目改编而来，用于创建不同类型的注意力掩码。
+    Token可以关注到累积mask_ar小于或等于其自身的有效输入token。
+    通过这种方式，mask_ar可以用于设置多种类型的注意力模式。
+    
+    示例：
+    - [[1 1 1 1 1 1]]: 纯因果注意力
+    - [[0 0 0 1 1 1]]: 前缀语言模型注意力。前3个token可以相互关注，
+      后3个token具有因果注意力
+    - [[1 0 1 0 1 0 0 1 0 0]]: 4个块之间的因果注意力。块内的token可以
+      关注所有前面的块和同一块内的所有token
+    
     Args:
-      input_mask: bool[B, N] true if its part of the input, false if padding.
-      mask_ar: bool[?B, N] mask that's true where previous tokens cannot depend on
-        it and false where it shares the same attention mask as the previous token.
+        input_mask: bool[B, N] 输入掩码，True表示是输入的一部分，False表示填充
+        mask_ar: bool[?B, N] 自回归掩码，True表示前面的token不能依赖它，
+                False表示它与前一个token共享相同的注意力掩码
+                
+    Returns:
+        bool[B, N, N] 注意力掩码，指定哪些token可以相互关注
     """
     mask_ar = jnp.broadcast_to(mask_ar, input_mask.shape)
     cumsum = jnp.cumsum(mask_ar, axis=1)
@@ -48,58 +65,120 @@ def make_attn_mask(input_mask, mask_ar):
 def posemb_sincos(
     pos: at.Real[at.Array, " b"], embedding_dim: int, min_period: float, max_period: float
 ) -> at.Float[at.Array, "b {embedding_dim}"]:
-    """Computes sine-cosine positional embedding vectors for scalar positions."""
+    """
+    计算标量位置的正弦-余弦位置嵌入向量
+    
+    这个函数为标量位置（如时间步）生成位置嵌入，使用正弦和余弦函数的组合。
+    这种位置编码方式在Transformer架构中广泛使用，能够很好地表示位置信息。
+    
+    Args:
+        pos: 标量位置数组，形状为[b]
+        embedding_dim: 嵌入维度，必须是偶数
+        min_period: 最小周期
+        max_period: 最大周期
+        
+    Returns:
+        位置嵌入向量，形状为[b, embedding_dim]
+        
+    Raises:
+        ValueError: 如果embedding_dim不是偶数
+    """
     if embedding_dim % 2 != 0:
         raise ValueError(f"embedding_dim ({embedding_dim}) must be divisible by 2")
 
+    # 创建从0到1的分数，用于生成不同频率的正弦波
     fraction = jnp.linspace(0.0, 1.0, embedding_dim // 2)
+    # 计算每个频率对应的周期
     period = min_period * (max_period / min_period) ** fraction
+    # 计算正弦输入：位置 * 频率 * 2π
     sinusoid_input = jnp.einsum(
         "i,j->ij",
         pos,
         1.0 / period * 2 * jnp.pi,
         precision=jax.lax.Precision.HIGHEST,
     )
+    # 连接正弦和余弦值
     return jnp.concatenate([jnp.sin(sinusoid_input), jnp.cos(sinusoid_input)], axis=-1)
 
 
 class Pi0(_model.BaseModel):
+    """
+    Pi0/Pi0.5模型类
+    
+    这是一个基于PaliGemma的视觉-语言-动作模型，能够根据图像观察和语言指令生成机器人动作。
+    模型架构包括：
+    1. PaliGemma语言模型：处理语言指令和图像特征
+    2. 动作专家网络：专门处理动作生成
+    3. 图像编码器：将图像转换为token
+    4. 各种投影层：连接不同组件
+    
+    Pi0.5相比Pi0的改进：
+    - 使用adaRMSNorm进行时间建模
+    - 离散状态输入
+    - 更长的token序列支持
+    """
+    
     def __init__(self, config: pi0_config.Pi0Config, rngs: nnx.Rngs):
+        """
+        初始化Pi0模型
+        
+        Args:
+            config: 模型配置
+            rngs: 随机数生成器
+        """
         super().__init__(config.action_dim, config.action_horizon, config.max_token_len)
-        self.pi05 = config.pi05
+        self.pi05 = config.pi05  # 是否启用Pi0.5模式
+        
+        # 获取PaliGemma和动作专家网络的配置
         paligemma_config = _gemma.get_config(config.paligemma_variant)
         action_expert_config = _gemma.get_config(config.action_expert_variant)
-        # TODO: rewrite gemma in NNX. For now, use bridge.
+        
+        # 创建PaliGemma语言模型
+        # TODO: 重写gemma为NNX版本，目前使用桥接
         llm = nnx_bridge.ToNNX(
             _gemma.Module(
-                configs=[paligemma_config, action_expert_config],
+                configs=[paligemma_config, action_expert_config],  # 两个配置：语言模型和动作专家
                 embed_dtype=config.dtype,
-                adarms=config.pi05,
+                adarms=config.pi05,  # Pi0.5使用adaRMSNorm
             )
         )
+        # 初始化语言模型，Pi0.5在动作专家网络中使用adaRMSNorm
         llm.lazy_init(rngs=rngs, method="init", use_adarms=[False, True] if config.pi05 else [False, False])
+        
+        # 创建图像编码器（SigLIP）
         img = nnx_bridge.ToNNX(
             _siglip.Module(
-                num_classes=paligemma_config.width,
-                variant="So400m/14",
-                pool_type="none",
-                scan=True,
+                num_classes=paligemma_config.width,  # 输出维度与PaliGemma匹配
+                variant="So400m/14",  # SigLIP变体
+                pool_type="none",  # 不使用池化
+                scan=True,  # 使用扫描模式
                 dtype_mm=config.dtype,
             )
         )
+        # 初始化图像编码器
         img.lazy_init(next(iter(config.fake_obs().images.values())), train=False, rngs=rngs)
+        
+        # 组合PaliGemma组件
         self.PaliGemma = nnx.Dict(llm=llm, img=img)
+        
+        # 动作输入投影层：将动作维度投影到专家网络维度
         self.action_in_proj = nnx.Linear(config.action_dim, action_expert_config.width, rngs=rngs)
+        
+        # Pi0.5和Pi0使用不同的时间建模方式
         if config.pi05:
+            # Pi0.5：使用时间MLP进行adaRMSNorm
             self.time_mlp_in = nnx.Linear(action_expert_config.width, action_expert_config.width, rngs=rngs)
             self.time_mlp_out = nnx.Linear(action_expert_config.width, action_expert_config.width, rngs=rngs)
         else:
+            # Pi0：使用状态投影和动作-时间MLP
             self.state_proj = nnx.Linear(config.action_dim, action_expert_config.width, rngs=rngs)
             self.action_time_mlp_in = nnx.Linear(2 * action_expert_config.width, action_expert_config.width, rngs=rngs)
             self.action_time_mlp_out = nnx.Linear(action_expert_config.width, action_expert_config.width, rngs=rngs)
+            
+        # 动作输出投影层：将专家网络输出投影回动作维度
         self.action_out_proj = nnx.Linear(action_expert_config.width, config.action_dim, rngs=rngs)
 
-        # This attribute gets automatically set by model.train() and model.eval().
+        # 这个属性会被model.train()和model.eval()自动设置
         self.deterministic = True
 
     @at.typecheck

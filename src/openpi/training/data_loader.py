@@ -138,6 +138,7 @@ def create_torch_dataset(
         return FakeDataset(model_config, num_samples=1024)
 
     dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(repo_id)
+    # 自动从 HuggingFace Hub 下载和缓存数据集 根据repo_id
     dataset = lerobot_dataset.LeRobotDataset(
         data_config.repo_id,
         delta_timestamps={

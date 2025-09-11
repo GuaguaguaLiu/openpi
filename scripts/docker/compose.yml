@@ -1,29 +1,56 @@
-# Run with:
+# 运行命令：
 # docker compose -f scripts/docker/compose.yml up --build
+
+# 定义服务列表
 services:
+  # 服务名称：openpi_server
   openpi_server:
+    # 镜像名称：openpi_server
     image: openpi_server
+    
+    # 构建配置：如何构建这个镜像
     build:
+      # 构建上下文：相对于 compose.yml 文件的路径（../../ 表示项目根目录）
       context: ../..
+      # Dockerfile 路径：相对于构建上下文的路径
       dockerfile: scripts/docker/serve_policy.Dockerfile
+    
+    # 启用 init 系统：处理僵尸进程，确保信号正确传递
     init: true
+    
+    # 分配伪终端：允许交互式操作（如 bash 命令）
     tty: true
+    
+    # 网络模式：使用主机网络，容器直接使用主机的网络接口
     network_mode: host
-    # Populate configured openpi data home to /openpi_assets inside the container.
-    # Populate aws credential inside the container.
+    
+    # 卷挂载配置：将主机目录挂载到容器内
     volumes:
+      # 将当前工作目录（$PWD）挂载到容器的 /app 目录
+      # 这样容器内可以访问你的项目代码
       - $PWD:/app
+      # 将 OpenPI 数据目录挂载到容器的 /openpi_assets 目录
+      # ${OPENPI_DATA_HOME:-~/.cache/openpi} 表示：
+      # 如果环境变量 OPENPI_DATA_HOME 存在则使用它，否则使用 ~/.cache/openpi
       - ${OPENPI_DATA_HOME:-~/.cache/openpi}:/openpi_assets
+    
+    # 环境变量配置
     environment:
+      # 传递 SERVER_ARGS 环境变量（如果存在）
       - SERVER_ARGS
+      # 设置容器内的 OPENPI_DATA_HOME 环境变量
       - OPENPI_DATA_HOME=/openpi_assets
+      # 标记当前运行在 Docker 环境中
       - IS_DOCKER=true
 
-    # Comment out this block if not running on a machine with GPUs.
+    # GPU 资源配置（如果没有 GPU 可以注释掉这个块）
     deploy:
       resources:
         reservations:
           devices:
+            # 使用 NVIDIA GPU 驱动
             - driver: nvidia
+              # 分配 1 个 GPU
               count: 1
+              # GPU 能力：支持 GPU 计算
               capabilities: [gpu]
