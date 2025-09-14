@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from openpi.models.pi0 import Pi0
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True) # 自动为类生成 __init__, __repr__, __eq__, __hash__ 等方法
 class Pi0Config(_model.BaseModelConfig):
     """
     Pi0/Pi0.5模型配置类

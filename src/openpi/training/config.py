@@ -498,7 +498,9 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
         model_transforms = ModelTransformFactory()(model_config)
 
         # 我们返回用于训练和推理的所有数据变换。这里不需要更改任何内容
+        # replace是指替换掉 DataConfig 中的字段内容
         return dataclasses.replace(
+            # 这里调的是 DataConfigFactory 的函数, 返回的是 DataConfig
             self.create_base_config(assets_dirs, model_config),
             repack_transforms=repack_transform,
             data_transforms=data_transforms,
