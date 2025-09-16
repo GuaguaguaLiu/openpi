@@ -28,6 +28,7 @@ import openpi.models.tokenizer as _tokenizer
 import openpi.policies.aloha_policy as aloha_policy
 import openpi.policies.droid_policy as droid_policy
 import openpi.policies.libero_policy as libero_policy
+import openpi.policies.agi_policy as agi_policy
 import openpi.shared.download as _download
 import openpi.shared.normalize as _normalize
 import openpi.training.droid_rlds_dataset as droid_rlds_dataset
@@ -450,6 +451,7 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
         # 对于您自己的数据集，首先确定您的环境传递给策略服务器的键，
         # 然后修改下面的映射，使您的数据集的键匹配到这些目标键
         # 重新打包变换在这里简单地重新映射键名
+        # 注意：前面的是新键，后面的是旧键
         repack_transform = _transforms.Group(
             inputs=[
                 _transforms.RepackTransform(
@@ -501,6 +503,87 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
         # replace是指替换掉 DataConfig 中的字段内容
         return dataclasses.replace(
             # 这里调的是 DataConfigFactory 的函数, 返回的是 DataConfig
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+        )
+
+
+@dataclasses.dataclass(frozen=True)
+class LeRobotAgiDataConfig(DataConfigFactory):
+    """LeRobot AGI 数据集配置类。
+    
+    该类专门用于配置 AGI 数据集的数据加载和变换。
+    """
+
+    # 是否应用额外的增量变换
+    extra_delta_transform: bool = False
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        """创建 AGI 数据配置。
+        
+        Args:
+            assets_dirs: 资源文件目录路径。
+            model_config: 模型配置对象。
+            
+        Returns:
+            配置好的 AGI 数据配置对象。
+        """
+        # 重新打包变换：将AGI数据集的键映射到标准键
+        # 关键：将单数的'action'映射为复数的'actions'
+        # 'observation.state',
+        # 'action',
+        # 'observation.velocity',
+        # 'observation.images.cam_high',
+        # 'observation.images.cam_low',
+        # 'observation.images.cam_left_wrist',
+        # 'observation.images.cam_right_wrist',
+        # 'label',
+        # 'timestamp',
+        # 'frame_index',
+        # 'episode_index',
+        # 'index',
+        # 'task_index',
+        # 'action_is_pad',
+        # 'task'
+        # TODO 注意生成数据的时候生成的task 都是debug 有问题
+        # TODO 需要注意 是把右侧映射成左侧, 并且映射完 只剩下左侧的内容(不会保留原来数据集的内容)
+        repack_transform = _transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {   
+                        "cam_high": "observation.images.cam_high",
+                        "cam_left_wrist": "observation.images.cam_left_wrist",
+                        "cam_right_wrist": "observation.images.cam_right_wrist",
+                        "state": "observation.state",
+                        "actions": "action",
+                        "prompt": "prompt",
+                    }
+                )
+            ]
+        )
+
+        # TODO 注意这个地方是自己定义的输入输出格式
+        data_transforms = _transforms.Group(
+            inputs=[agi_policy.AgiInputs(model_type=model_config.model_type)],
+            outputs=[agi_policy.AgiOutputs()],
+        )
+
+        # 可选的增量变换
+        if self.extra_delta_transform:
+            delta_action_mask = _transforms.make_bool_mask(6, -1)
+            data_transforms = data_transforms.push(
+                inputs=[_transforms.DeltaActions(delta_action_mask)],
+                outputs=[_transforms.AbsoluteActions(delta_action_mask)],
+            )
+
+        # 模型变换
+        model_transforms = ModelTransformFactory()(model_config)
+
+        # 返回完整的数据配置
+        return dataclasses.replace(
             self.create_base_config(assets_dirs, model_config),
             repack_transforms=repack_transform,
             data_transforms=data_transforms,
@@ -1197,6 +1280,82 @@ _CONFIGS = [
         exp_name="debug_pi05",
         wandb_enabled=False,
     ),
+    TrainConfig(
+        name="pi05_libero_debug",
+        model=pi0_config.Pi0Config(pi05=True, action_horizon=10, discrete_state_input=False),
+        data=LeRobotLiberoDataConfig(
+            repo_id="physical-intelligence/libero",
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+        ),
+        batch_size=256,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=10_000,
+            peak_lr=5e-5,
+            decay_steps=1_000_000,
+            decay_lr=5e-5,
+        ),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=0.999,
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        pytorch_weight_path="/home/tione/notebook/workspace/rickyyzliu/code/openpi/checkpoints_pytorch",
+        num_train_steps=30_000,
+    ),
+    TrainConfig(
+        name="agi_debug",  # 名字要注意 根据名字加载配置
+        model=pi0_config.Pi0Config(pi05=True, action_horizon=10, discrete_state_input=False),
+        data=LeRobotAgiDataConfig(  # 这个是自己单独定义的
+            repo_id="test_agi_rickyyzliu_0915",  # 注意: 从HF_LEROBOT_HOME/test_agi_rickyyzliu_0915 下面去加载数据
+            base_config=DataConfig(prompt_from_task=True, action_sequence_keys=("action",)),  # 注意: action_sequence_keys=("action",) 这里的action要和你数据集里action名字保持一致，小心actions！
+            extra_delta_transform=False,
+        ),
+        batch_size=256,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=10_000,
+            peak_lr=5e-5,
+            decay_steps=1_000_000,
+            decay_lr=5e-5,
+        ),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=0.999,
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        pytorch_weight_path="/home/tione/notebook/workspace/rickyyzliu/code/openpi/checkpoints_pytorch",
+        num_train_steps=30_000,
+    ),
+    # #
+    # # 微调 LIBERO 配置
+    # #
+    # # 这些训练配置定义了在您自己的数据集上微调基础模型的超参数
+    # # 它们用于定义关键元素，如您正在训练的数据集、您正在使用的基础检查点，
+    # # 以及其他超参数，如运行多少训练步数或使用什么学习率
+    # # 对于您自己的数据集，您可以复制此类并根据下面的注释修改数据集名称和数据变换
+    # TrainConfig(
+    #     # 更改名称以反映您的模型和数据集
+    #     name="pi0_libero",
+    #     # 这里您定义模型配置 -- 在此示例中，我们使用 pi0 作为模型
+    #     # 架构并执行*完整*微调。在下面的示例中，我们展示如何修改
+    #     # 此配置以执行*低内存*（LORA）微调并使用 pi0-FAST 作为替代架构
+    #     model=pi0_config.Pi0Config(),
+    #     # 这里您定义您正在训练的数据集。在此示例中，我们使用 Libero
+    #     # 数据集。对于您自己的数据集，您可以更改 repo_id 指向您的数据集
+    #     # 还要修改 DataConfig 以使用您为数据集创建的新配置
+    #     data=LeRobotLiberoDataConfig(
+    #         repo_id="physical-intelligence/libero",
+    #         base_config=DataConfig(
+    #             # 此标志确定我们是否从 LeRobot 数据集的 ``task`` 字段加载提示词（即任务指令）
+    #             # 如果设置为 True，提示词将出现在输入字典中名为 ``prompt`` 的字段中
+    #             # 推荐设置为 True
+    #             prompt_from_task=True,
+    #         ),
+    #         extra_delta_transform=True,
+    #     ),
+    #     # 这里您定义要加载哪个预训练检查点来初始化模型
+    #     # 这应该与您在上面选择的模型配置匹配 -- 即在这种情况下，我们使用 pi0 基础模型
+    #     weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
+    #     # 下面您可以定义其他超参数，如学习率、训练步数等
+    #     # 查看基础 TrainConfig 类以获取可用超参数的完整列表
+    #     num_train_steps=30_000,
+    # ),
     #
     # RoboArena 配置
     #
