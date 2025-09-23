@@ -1,0 +1,63 @@
+# JAKA机器人HDF5到LeRobot转换配置文件
+
+# 环境变量配置
+environment:
+  HF_HOME: "/home/tione/notebook/workspace/rickyyzliu/huggingface/"  # Hugging Face缓存目录
+  HF_LEROBOT_HOME: "/home/tione/notebook/workspace/rickyyzliu/huggingface/lerobot/"  # LeRobot数据集存储目录
+
+# 测试模式配置
+test_mode:
+  enabled: false  # 设置为true启用测试模式
+  max_episodes_per_dataset: 2  # 测试模式下每个数据集最多处理的episode数量
+
+# 验证模式配置
+verify_mode:
+  enabled: false  # 设置为true启用验证模式，只验证已转换的数据集
+  dataset_name: "jaka_pick_bottle"  # 要验证的数据集名称
+
+# 输出数据集配置
+output:
+  name: "jaka_pick_bottle"
+  robot_type: "jaka"
+  fps: 10
+  push_to_hub: false
+  tags: ["jaka", "robotics", "pick_bottle", "hdf5"]
+  private: false
+  push_videos: true
+  license: "apache-2.0"
+
+# 数据集路径列表
+datasets:
+  - path: "/home/tione/notebook/workspace/xanderrsun/Projects/embodied_pi0_action/data/formated/jaka1/pick_nearest_bottle_jaka_random_table"
+    task_name: "pick up the bottle"
+  - path: "/home/tione/notebook/workspace/xanderrsun/Projects/embodied_pi0_action/data/formated/jaka1/pick_nearest_bottle_jaka"
+    task_name: "pick up the bottle"
+
+# HDF5数据源映射配置（从HDF5文件读取的键名）
+hdf5_mapping:
+  images:
+    cam_high: "observations/images/cam_high"
+    cam_left_wrist: "observations/images/cam_left_wrist"
+    cam_right_wrist: "observations/images/cam_right_wrist"
+  state: "observations/qpos"
+  action: "action"
+
+# LeRobot输出映射配置（输出到LeRobot数据集的键名）
+lerobot_mapping:
+  images:
+    cam_high: "observation.images.cam_high"
+    cam_left_wrist: "observation.images.cam_left_wrist"
+    cam_right_wrist: "observation.images.cam_right_wrist"
+  state: "observation.state"
+  action: "action"
+
+# 数据格式配置
+data_format:
+  image_shape: [360, 640, 3]  # [height, width, channels]
+  state_dim: 16
+  action_dim: 16
+
+# 处理配置
+processing:
+  image_writer_threads: 30  # 图像写入线程数，用于I/O密集型操作
+  image_writer_processes: 12  # 图像写入进程数，用于CPU密集型操作

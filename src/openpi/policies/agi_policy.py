@@ -76,6 +76,7 @@ class AgiInputs(transforms.DataTransformFn):
     # 确定将使用哪个模型类型
     # 不要为您的数据集更改此参数
     model_type: _model.ModelType
+    only_use_head_camera: bool
 
     def __call__(self, data: dict) -> dict:
         """执行输入数据变换。
@@ -94,28 +95,49 @@ class AgiInputs(transforms.DataTransformFn):
         # Pi0 模型目前支持三种图像输入：一个第三人称视角和两个腕部视角（左右）
         # 如果您的数据集没有特定类型的图像（例如腕部图像），您可以在此处注释掉
         # 并用零数组替换，就像我们为下面的右腕图像所做的那样
-        # TODO 注意右侧的key要和 config里你定义的 repack_transform 配合着来（transform里左侧的key就是这里用的key）
-        base_image = _parse_image(data["cam_high"])  # 主摄像头图像
-        wrist_left_image = _parse_image(data["cam_left_wrist"])  # 腕部摄像头图像
-        wrist_right_image = _parse_image(data["cam_right_wrist"])  # 腕部摄像头图像
 
-        # 创建输入字典。不要更改下面字典中的键名
-        inputs = {
-            "state": data["state"],  # 机器人状态
-            "image": {
-                "base_0_rgb": base_image,  # 主摄像头图像
-                "left_wrist_0_rgb": wrist_left_image,  # 左腕摄像头图像
-                # 用适当形状的零数组填充任何不存在的图像
-                "right_wrist_0_rgb": wrist_right_image,  # 右腕摄像头图像（用零填充）
-            },
-            "image_mask": {
-                "base_0_rgb": np.True_,  # 主摄像头图像掩码（有效）
-                "left_wrist_0_rgb": np.True_,  # 左腕摄像头图像掩码（有效）
-                # 我们只为 pi0 模型掩码填充图像，而不是 pi0-FAST
-                # 不要为您的数据集更改此逻辑
-                "right_wrist_0_rgb": np.True_ if self.model_type == _model.ModelType.PI0_FAST else np.False_,
-            },
-        }
+        if self.only_use_head_camera:
+            # print("*********** Train only use head camera!!!!!!!!!!! ***********")
+            base_image = _parse_image(data["cam_high"])  # 主摄像头图像
+            # wrist_left_image = _parse_image(data["cam_left_wrist"])  # 腕部摄像头图像
+            # wrist_right_image = _parse_image(data["cam_right_wrist"])  # 腕部摄像头图像
+
+            # 创建输入字典。不要更改下面字典中的键名
+            inputs = {
+                "state": data["state"],  # 机器人状态
+                "image": {
+                    "base_0_rgb": base_image,  # 主摄像头图像
+                    "left_wrist_0_rgb": np.zeros_like(base_image),  # 左腕摄像头图像
+                    "right_wrist_0_rgb": np.zeros_like(base_image),  # 右腕摄像头图像（用零填充）
+                },
+                "image_mask": {
+                    "base_0_rgb": np.True_,  # 主摄像头图像掩码（有效）
+                    "left_wrist_0_rgb": np.True_,  # 左腕摄像头图像掩码（有效）
+                    "right_wrist_0_rgb": np.True_ if self.model_type == _model.ModelType.PI0_FAST else np.False_,
+                },
+            }
+        else:
+            # TODO 注意右侧的key要和 config里你定义的 repack_transform 配合着来（transform里左侧的key就是这里用的key）
+            base_image = _parse_image(data["cam_high"])  # 主摄像头图像
+            wrist_left_image = _parse_image(data["cam_left_wrist"])  # 腕部摄像头图像
+            wrist_right_image = _parse_image(data["cam_right_wrist"])  # 腕部摄像头图像
+
+            # 创建输入字典。不要更改下面字典中的键名
+            inputs = {
+                "state": data["state"],  # 机器人状态
+                "image": {
+                    "base_0_rgb": base_image,  # 主摄像头图像
+                    "left_wrist_0_rgb": wrist_left_image,  # 左腕摄像头图像
+                    "right_wrist_0_rgb": wrist_right_image,  # 右腕摄像头图像（用零填充）
+                },
+                "image_mask": {
+                    "base_0_rgb": np.True_,  # 主摄像头图像掩码（有效）
+                    "left_wrist_0_rgb": np.True_,  # 左腕摄像头图像掩码（有效）
+                    # 我们只为 pi0 模型掩码填充图像，而不是 pi0-FAST
+                    # 不要为您的数据集更改此逻辑
+                    "right_wrist_0_rgb": np.True_ if self.model_type == _model.ModelType.PI0_FAST else np.False_,
+                },
+            }
 
         # 将动作填充到模型动作维度。为您的数据集保留此逻辑
         # 动作仅在训练期间可用

@@ -519,6 +519,7 @@ class LeRobotAgiDataConfig(DataConfigFactory):
 
     # 是否应用额外的增量变换
     extra_delta_transform: bool = False
+    only_use_head_camera: bool = True
 
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
@@ -567,7 +568,7 @@ class LeRobotAgiDataConfig(DataConfigFactory):
 
         # TODO 注意这个地方是自己定义的输入输出格式
         data_transforms = _transforms.Group(
-            inputs=[agi_policy.AgiInputs(model_type=model_config.model_type)],
+            inputs=[agi_policy.AgiInputs(model_type=model_config.model_type, only_use_head_camera=self.only_use_head_camera)],
             outputs=[agi_policy.AgiOutputs()],
         )
 
@@ -1305,11 +1306,13 @@ _CONFIGS = [
         name="agi_debug",  # 名字要注意 根据名字加载配置
         model=pi0_config.Pi0Config(pi05=True, action_horizon=10, discrete_state_input=False),
         data=LeRobotAgiDataConfig(  # 这个是自己单独定义的
+            # repo_id="jaka_pick_bottle",  # 注意: 从HF_LEROBOT_HOME/test_agi_rickyyzliu_0915 下面去加载数据
             repo_id="test_agi_210",  # 注意: 从HF_LEROBOT_HOME/test_agi_rickyyzliu_0915 下面去加载数据
             base_config=DataConfig(prompt_from_task=True, action_sequence_keys=("action",)),  # 注意: action_sequence_keys=("action",) 这里的action要和你数据集里action名字保持一致，小心actions！
             extra_delta_transform=False,
+            only_use_head_camera=True,
         ),
-        batch_size=32,
+        batch_size=128,
         num_workers=128,
         lr_schedule=_optimizer.CosineDecaySchedule(
             warmup_steps=10_000,
