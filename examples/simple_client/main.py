@@ -24,6 +24,8 @@ import polars as pl
 import rich
 import tqdm
 import tyro
+import pickle
+
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,7 @@ class EnvMode(enum.Enum):
     ALOHA_SIM = "aloha_sim"  # ALOHA仿真环境
     DROID = "droid"          # DROID机器人环境
     LIBERO = "libero"        # LIBERO基准测试环境
+    AGI = "agi"              # AGI环境
 
 
 @dataclasses.dataclass
@@ -180,6 +183,7 @@ def main(args: Args) -> None:
         EnvMode.ALOHA_SIM: _random_observation_aloha,
         EnvMode.DROID: _random_observation_droid,
         EnvMode.LIBERO: _random_observation_libero,
+        EnvMode.AGI: _random_observation_agi,
     }[args.env]
 
     # 创建WebSocket客户端策略
@@ -191,8 +195,19 @@ def main(args: Args) -> None:
     logger.info(f"服务器元数据: {policy.get_server_metadata()}")
 
     # 发送几个观察数据以确保模型已加载
-    for _ in range(2):
-        policy.infer(obs_fn())
+    action_list = []
+    for time_step in range(338):
+
+        obs = obs_fn(use_train_obs=False, time_step=time_step)
+        
+        action = policy.infer(obs)["actions"] # 10 * 16
+        action_list.append(action)
+
+        # print(f"gt action: {obs['actions']}, pred action: {action[0]}")
+    import pdb; pdb.set_trace()
+    pickle.dump(action_list, open("test_data/action_list.pkl", "wb"))
+    import pdb; pdb.set_trace()
+
 
     # 创建时间统计记录器
     timing_recorder = TimingRecorder()
@@ -219,6 +234,41 @@ def main(args: Args) -> None:
     # 如果指定了时间文件路径，则保存统计结果
     if args.timing_file is not None:
         timing_recorder.write_parquet(args.timing_file)
+
+
+def _random_observation_agi(use_train_obs: bool = False, time_step: int = 0) -> dict:
+    """
+    生成AGI环境的随机观察数据
+    """
+    if use_train_obs:
+        train_obs = pickle.load(open("test_data/outputs/train_obs_338.pkl", "rb"))
+    else:
+        real_obs = pickle.load(open("test_data/obs_0.pkl", "rb"))
+
+    if use_train_obs:
+        obs = {
+        "state": train_obs[time_step]["observation.state"],  # 8维机器人状态
+        "cam_high": train_obs[time_step]["observation.images.cam_high"],      # 主摄像头图像
+        "cam_left_wrist": train_obs[time_step]["observation.images.cam_left_wrist"], # 手腕摄像头图像
+        "cam_right_wrist": train_obs[time_step]["observation.images.cam_right_wrist"], # 手腕摄像头图像
+        "prompt": "Put the can on the black storage rack",  # 语言指令
+        "actions": train_obs[time_step]["action"],
+    }
+    else:
+        obs = {
+        "state": real_obs["state"],  # 8维机器人状态
+        "cam_high": real_obs["cam_high"],      # 主摄像头图像
+        "cam_left_wrist": real_obs["cam_left_wrist"], # 手腕摄像头图像
+        "cam_right_wrist": real_obs["cam_right_wrist"], # 手腕摄像头图像
+        "prompt": "Put the can on the black storage rack",  # 语言指令
+        # "actions": None,
+    }
+
+    print(f"time_step: {time_step}")
+    # print(f"obs: {obs}")
+
+
+    return obs
 
 
 def _random_observation_aloha() -> dict:
