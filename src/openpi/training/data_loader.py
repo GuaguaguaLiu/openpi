@@ -332,12 +332,12 @@ def create_rlds_dataset(
     # 目前只支持DROID格式的RLDS数据集
     # DroidRldsDataset是专门为DROID数据集设计的RLDS数据集实现
     return DroidRldsDataset(
-        data_dir=data_config.rlds_data_dir,        # RLDS数据目录路径
-        batch_size=batch_size,                     # 批次大小
-        shuffle=shuffle,                           # 是否打乱数据
-        action_chunk_size=action_horizon,          # 动作序列长度
-        action_space=data_config.action_space,     # 动作空间定义
-        filter_dict_path=data_config.filter_dict_path,  # 数据过滤配置路径
+        data_dir=data_config.rlds_data_dir,    # RLDS数据目录路径
+        batch_size=batch_size,                 # 批次大小
+        shuffle=shuffle,                       # 是否打乱数据
+        action_chunk_size=action_horizon,      # 动作序列长度
+        action_space=data_config.action_space, # 动作空间定义
+        datasets=data_config.datasets,         # 数据集采样配置
     )
 
 

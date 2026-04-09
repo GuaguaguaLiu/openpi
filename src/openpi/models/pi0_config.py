@@ -53,6 +53,8 @@ class Pi0Config(_model.BaseModelConfig):
     # 用于决定数据预处理的方式
     discrete_state_input: bool = None  # type: ignore  # 是否使用离散状态输入
 
+    pytorch_compile_mode: str | None = "max-autotune"
+
     def __post_init__(self):
         """
         初始化后处理函数
@@ -67,6 +69,13 @@ class Pi0Config(_model.BaseModelConfig):
         if self.discrete_state_input is None:
             # 离散状态输入与pi05模式保持一致
             object.__setattr__(self, "discrete_state_input", self.pi05)
+        if self.pytorch_compile_mode is not None:
+            assert self.pytorch_compile_mode in [
+                "default",
+                "reduce-overhead",
+                "max-autotune",
+                "max-autotune-no-cudagraphs",
+            ]
 
     @property
     @override

@@ -32,6 +32,7 @@ import openpi.policies.agi_policy as agi_policy
 import openpi.shared.download as _download
 import openpi.shared.normalize as _normalize
 import openpi.training.droid_rlds_dataset as droid_rlds_dataset
+import openpi.training.misc.polaris_config as polaris_config
 import openpi.training.misc.roboarena_config as roboarena_config
 import openpi.training.optimizer as _optimizer
 import openpi.training.weight_loaders as weight_loaders
@@ -124,8 +125,8 @@ class DataConfig:
     rlds_data_dir: str | None = None
     # DROID 数据集的动作空间
     action_space: droid_rlds_dataset.DroidActionSpace | None = None
-    # DROID 数据集的数据过滤器文件路径
-    filter_dict_path: str | None = None
+    # RLDS 采样数据集列表（可配置每个数据集的权重与过滤规则）
+    datasets: Sequence[droid_rlds_dataset.RLDSDataset] = ()
 
 
 class GroupFactory(Protocol):
@@ -604,12 +605,19 @@ class RLDSDroidDataConfig(DataConfigFactory):
     # DROID 动作空间类型
     action_space: droid_rlds_dataset.DroidActionSpace | None = None
 
-    # 过滤选项。可以传递一个字典的路径，该字典将情节映射到时间步范围
-    # 到表示要保留的时间步范围的元组（开始，结束）
-    # 情节通过 f"{recording_folderpath}--{file_path}" 唯一标识，
-    # 两者都存在于 RLDS 情节元数据中
-    # 过滤器字典文件的路径
-    filter_dict_path: str | None = "gs://openpi-assets/droid/droid_sample_ranges_v1_0_1.json"
+    # Filtering options. Can pass a path to a dictionary that maps episodes to timestep ranges
+    # to tuples denoting ranges of time steps to keep (start, end). Episodes are uniquely identified with
+    # f"{recording_folderpath}--{file_path}", both of which are present in the RLDS episode metadata.
+
+    # List of datasets to sample from: name, version, weight, and optionally filter_dict_path
+    datasets: Sequence[droid_rlds_dataset.RLDSDataset] = (
+        droid_rlds_dataset.RLDSDataset(
+            name="droid",
+            version="1.0.1",
+            weight=1.0,
+            filter_dict_path="gs://openpi-assets/droid/droid_sample_ranges_v1_0_1.json",
+        ),
+    )
 
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
@@ -667,7 +675,7 @@ class RLDSDroidDataConfig(DataConfigFactory):
             model_transforms=model_transforms,
             rlds_data_dir=self.rlds_data_dir,
             action_space=self.action_space,
-            filter_dict_path=self.filter_dict_path,
+            datasets=self.datasets,
         )
 
 
@@ -1364,6 +1372,7 @@ _CONFIGS = [
     # RoboArena 配置
     #
     *roboarena_config.get_roboarena_configs(),
+    *polaris_config.get_polaris_configs(),
 ]
 
 # 验证配置名称的唯一性

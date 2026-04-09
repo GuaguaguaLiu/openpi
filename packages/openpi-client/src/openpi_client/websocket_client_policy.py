@@ -23,11 +23,14 @@ class WebsocketClientPolicy(_base_policy.BasePolicy):
         """构造函数
 
         Args:
-            host: 策略服务器主机地址（默认 "0.0.0.0"，常用于本机/容器内访问）。
+            host: 策略服务器主机地址（支持直接传 ws:// 或 wss:// URI）。
             port: 策略服务器端口（None 表示使用服务器默认端口）。
             api_key: 可选的鉴权密钥，将以 `Authorization: Api-Key <key>` 发送。
         """
-        self._uri = f"ws://{host}"
+        if host.startswith("ws"):
+            self._uri = host
+        else:
+            self._uri = f"ws://{host}"
         if port is not None:
             self._uri += f":{port}"
         # 使用支持 numpy 的 msgpack 打包器，确保高效传输 ndarray 等数据
